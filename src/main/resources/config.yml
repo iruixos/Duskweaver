@@ -1,0 +1,28 @@
+# Day covers Minecraft clock 0-11999; night covers 12000-23999.
+# Durations assume a server running at 20 TPS.
+day-length-minutes: 15.0
+night-length-minutes: 5.0
+
+# Only listed worlds are controlled by Duskweaver.
+worlds:
+  - world
+
+sleep:
+  # false: sleeping does not skip the night in managed worlds.
+  enabled: true
+
+  # Exactly one of the following should be true when sleep is enabled.
+  # If both are false, vanilla sleeping thresholds are used (with a countdown).
+  one-player-sleep: false
+  majority-vote: true
+
+  # Seconds of continuous quorum before advancing to the next dawn.
+  countdown-seconds: 10
+
+  # Players who have not moved, interacted, or chatted within this period
+  # do not count toward the majority. 0 disables inactivity filtering.
+  # Sleeping players always count as active. Spectators never count.
+  inactivity-timeout-minutes: 5
+
+  # Announce countdown start, cancellation and completion to the world.
+  broadcast-messages: true
