@@ -35,6 +35,8 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
     private boolean broadcast;
     private int countdownSeconds;
     private long idleTimeoutMillis;
+    private boolean clearWeatherOnSkip;
+    private int clearWeatherDurationTicks;
 
     @Override
     public void onEnable() {
@@ -68,6 +70,11 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
         boolean majority = getConfig().getBoolean("sleep.majority-vote", true);
         int countdown = getConfig().getInt("sleep.countdown-seconds", -1);
         double idleMinutes = getConfig().getDouble("sleep.inactivity-timeout-minutes", -1);
+        double clearMinutes = getConfig().getDouble("sleep.clear-weather-duration-minutes", -1);
+        if (!Double.isFinite(clearMinutes) || clearMinutes < 0 || clearMinutes > Integer.MAX_VALUE / 1200.0) {
+            getLogger().severe("Invalid clear-weather-duration-minutes; must be nonnegative and fit in integer ticks.");
+            return false;
+        }
         if (!Double.isFinite(day) || !Double.isFinite(night) || day <= 0 || night <= 0
                 || !Double.isFinite(idleMinutes) || idleMinutes < 0 || idleMinutes > 100000
                 || countdown < 0 || countdown > 86400 || (enabled && single && majority)) {
@@ -94,6 +101,8 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
         countdownSeconds = countdown;
         idleTimeoutMillis = (long) (idleMinutes * 60000.0);
         broadcast = getConfig().getBoolean("sleep.broadcast-messages", true);
+        clearWeatherOnSkip = getConfig().getBoolean("sleep.clear-weather-on-skip", true);
+        clearWeatherDurationTicks = (int) Math.round(clearMinutes * 1200.0);
         for (String name : wanted) {
             World world = Bukkit.getWorld(name);
             if (world == null) {
@@ -184,9 +193,24 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
                 world.setFullTime(fullTime + remaining);
                 clock.lastFullTime = world.getFullTime();
                 clock.fraction = 0;
+                clearWeatherAfterSleep(world);
                 clock.countdownStart = -1;
                 if (broadcast) world.getPlayers().forEach(p -> p.sendMessage("§6[Duskweaver] §aGood morning!"));
             }
+        }
+    }
+
+    /** Clears active rain/snow and thunder after a successful sleep skip only. */
+    private void clearWeatherAfterSleep(World world) {
+        if (!clearWeatherOnSkip || (!world.hasStorm() && !world.isThundering())) return;
+        world.setStorm(false);
+        world.setThundering(false);
+        world.setWeatherDuration(0);
+        world.setThunderDuration(0);
+        // Minecraft weather durations use game ticks (20 ticks/second at 20 TPS).
+        // A zero duration permits the normal weather cycle to resume immediately.
+        if (clearWeatherDurationTicks > 0) {
+            world.setClearWeatherDuration(clearWeatherDurationTicks);
         }
     }
 

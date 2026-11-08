@@ -26,3 +26,11 @@ sleep:
 
   # Announce countdown start, cancellation and completion to the world.
   broadcast-messages: true
+
+  # Clear rain, snow and thunderstorms after a successful Duskweaver night skip.
+  # Does not clear weather when entering a bed or when the countdown is cancelled.
+  clear-weather-on-skip: true
+
+  # Minimum period of clear weather following a successful weather-clearing skip,
+  # in real-time minutes at 20 TPS. 0 resumes normal weather scheduling.
+  clear-weather-duration-minutes: 10
