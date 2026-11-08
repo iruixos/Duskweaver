@@ -1,8 +1,8 @@
 ![Duskweaver Banner](assets/header.png)
 
-# Duskweaver v1.1.0
+# Duskweaver
 
-**Weave time to your will.** Independent Minecraft day/night duration and sleep-based night skipping for Paper 26.3 (Java 25).
+**Weave time to your will.** Independent Minecraft day/night duration and sleep-based night skipping for Paper 26.3.
 
 ## Features
 
@@ -29,7 +29,7 @@ Use **JDK 25** and Maven:
 mvn clean package
 ```
 
-Output: `target/Duskweaver-1.1.0.jar`. Install in the server `plugins/` directory and restart.
+Output: `target/Duskweaver-VERSION.jar`. Install in the server `plugins/` directory and restart.
 
 ## Configuration
 
@@ -57,7 +57,7 @@ Sleeping players always count as active. Spectators are excluded. Activity is up
 ## Project information
 
 - **Plugin:** Duskweaver
-- **Current documented version:** 1.1.0
+- **Current documented version:** 1.2.0
 - **Author:** iruixos
 - **Platform:** Paper
 - **Package:** `com.iruixos.duskweaver`
