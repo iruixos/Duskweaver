@@ -53,6 +53,23 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
         Bukkit.getPluginManager().registerEvents(this, this);
         clockTask = Bukkit.getScheduler().runTaskTimer(this, this::tickClocks, 1L, 1L);
         sleepTask = Bukkit.getScheduler().runTaskTimer(this, this::tickSleep, 20L, 20L);
+        printStartupBanner();
+    }
+
+    private void printStartupBanner() {
+        String version = getPluginMeta().getVersion();
+        String[] lines = {
+                "",
+                "+--------------------------------+",
+                String.format("| %-30s |", "[DW] Duskweaver v" + version),
+                "|      by iruixos                |",
+                "|      Paper 26.3 / MC 26.3      |",
+                "+--------------------------------+",
+                ""
+        };
+        for (String line : lines) {
+            getLogger().info(line);
+        }
     }
 
     @Override

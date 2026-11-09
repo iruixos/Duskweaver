@@ -50,14 +50,13 @@ Sleeping players always count as active. Spectators are excluded. Activity is up
 - Plugin controls the Minecraft clock, not server TPS. Lag changes real-world durations.
 - Vanilla sleep skipping is suppressed with `playersSleepingPercentage=101` in managed worlds while enabled. The previous value is restored on clean shutdown. A crash cannot restore it automatically; if necessary, set the gamerule manually before restarting.
 - Duskweaver only manages worlds listed in `worlds` and already loaded when enabled/reloaded.
-- Weather is not cleared when skipping; only time is advanced.
+- Successful sleep skips can clear rain, snow, and thunderstorms when weather clearing is enabled. Daytime thunderstorm sleeping can clear the storm without advancing to morning.
 - Not intended for Folia or other plugins simultaneously controlling time/sleep gamerules.
-- Compilation and in-game testing are not verified in this environment.
+
 
 ## Project information
 
 - **Plugin:** Duskweaver
-- **Current documented version:** 1.2.2
 - **Author:** iruixos
 - **Platform:** Paper
 - **Package:** `com.iruixos.duskweaver`
@@ -65,5 +64,5 @@ Sleeping players always count as active. Spectators are excluded. Activity is up
 
 ## License
 
-Reapwright is licensed under the MIT License.
+Duskweaver is licensed under the MIT License.
 See the [LICENSE](LICENSE) file for details.
