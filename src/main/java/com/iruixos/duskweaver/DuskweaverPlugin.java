@@ -1,5 +1,7 @@
 package com.iruixos.duskweaver;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.GameRules;
@@ -157,8 +159,11 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
             if (world == null) continue;
             WorldClock clock = entry.getValue();
             long time = Math.floorMod(world.getFullTime(), 24000L);
-            // A player may sleep during a thunderstorm in daytime; we only skip nights.
-            if (!sleepEnabled || time < 12000 || time >= 24000) {
+            // During a daytime thunderstorm, vanilla allows players to sleep.
+            // Treat this as a weather skip, not a night skip: preserve the clock.
+            boolean daytimeThunderstorm = time < 12000 && world.isThundering();
+            boolean nighttime = time >= 12000;
+            if (!sleepEnabled || (!nighttime && !daytimeThunderstorm)) {
                 cancelCountdown(world, clock);
                 continue;
             }
@@ -182,20 +187,39 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
             if (clock.countdownStart < 0) {
                 clock.countdownStart = now;
                 if (broadcast) {
-                    String message = "§6[Duskweaver] §e" + sleeping + "/" + required
-                            + " sleeping. Skipping night in " + countdownSeconds + " seconds...";
+                    Component message = prefix()
+                            .append(Component.text(sleeping + "/" + required, NamedTextColor.LIGHT_PURPLE))
+                            .append(Component.text(" sleeping. ", NamedTextColor.GRAY))
+                            .append(Component.text(daytimeThunderstorm ? "Clearing thunderstorm" : "Skipping night", NamedTextColor.DARK_PURPLE))
+                            .append(Component.text(" in ", NamedTextColor.GRAY))
+                            .append(Component.text(countdownSeconds, NamedTextColor.YELLOW))
+                            .append(Component.text(" seconds...", NamedTextColor.GRAY));
                     for (Player player : world.getPlayers()) player.sendMessage(message);
                 }
             }
             if (now - clock.countdownStart >= countdownSeconds * 1000L) {
+                // Re-evaluate at completion: a storm can end during the countdown,
+                // or a world clock can cross from day into night.
                 long fullTime = world.getFullTime();
-                long remaining = 24000L - Math.floorMod(fullTime, 24000L);
-                world.setFullTime(fullTime + remaining);
-                clock.lastFullTime = world.getFullTime();
-                clock.fraction = 0;
+                long currentTime = Math.floorMod(fullTime, 24000L);
+                boolean stormSkip = currentTime < 12000 && world.isThundering();
+                if (currentTime < 12000 && !stormSkip) {
+                    cancelCountdown(world, clock);
+                    continue;
+                }
+                if (!stormSkip) {
+                    long remaining = 24000L - currentTime;
+                    world.setFullTime(fullTime + remaining);
+                    clock.lastFullTime = world.getFullTime();
+                    clock.fraction = 0;
+                }
                 clearWeatherAfterSleep(world);
                 clock.countdownStart = -1;
-                if (broadcast) world.getPlayers().forEach(p -> p.sendMessage("§6[Duskweaver] §aGood morning!"));
+                if (broadcast) {
+                    Component success = prefix().append(Component.text(
+                            stormSkip ? "Thunderstorm cleared!" : "Good morning!", NamedTextColor.GOLD));
+                    for (Player player : world.getPlayers()) player.sendMessage(success);
+                }
             }
         }
     }
@@ -214,10 +238,19 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
         }
     }
 
+    private Component prefix() {
+        return Component.text("[", NamedTextColor.DARK_PURPLE)
+                .append(Component.text("Duskweaver", NamedTextColor.GOLD))
+                .append(Component.text("] ", NamedTextColor.DARK_PURPLE));
+    }
+
     private void cancelCountdown(World world, WorldClock clock) {
         if (clock.countdownStart < 0) return;
         clock.countdownStart = -1;
-        if (broadcast) world.getPlayers().forEach(p -> p.sendMessage("§6[Duskweaver] §cNight skip cancelled."));
+        if (broadcast) {
+            Component message = prefix().append(Component.text("Sleep countdown cancelled.", NamedTextColor.GRAY));
+            for (Player player : world.getPlayers()) player.sendMessage(message);
+        }
     }
 
     private void releaseAll() {

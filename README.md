@@ -57,7 +57,7 @@ Sleeping players always count as active. Spectators are excluded. Activity is up
 ## Project information
 
 - **Plugin:** Duskweaver
-- **Current documented version:** 1.2.0
+- **Current documented version:** 1.2.2
 - **Author:** iruixos
 - **Platform:** Paper
 - **Package:** `com.iruixos.duskweaver`
