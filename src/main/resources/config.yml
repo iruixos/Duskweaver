@@ -94,10 +94,21 @@ nightmares:
 
   # Maximum duration of an active encounter, in seconds.
   encounter-timeout-seconds: 300
+  # Gold title, Light Purple time, native PINK progress bar.
+  countdown-bossbar:
+    enabled: true
 
-  # Area examined around the bed for unsafe conditions and spawn locations.
-  search-radius: 12
-  vertical-search-range: 4
+  # Beta-inspired unsafe-bed detection. Only loaded chunks are searched.
+  # A bounded ground-level path search allows corners and open doors.
+  search-radius: 24
+  vertical-search-range: 16
+  # Encounter mobs now prefer valid locations 2-6 blocks from the player,
+  # even in illuminated rooms. Two-block ceilings support standard zombies.
+  pathfinding:
+    # Random selections among reachable, dark spawn locations.
+    random-attempts: 20
+    # Maximum path nodes examined per sleep attempt (server-tick safety).
+    max-visited-nodes: 3000
 
   # Bed types eligible for Nightmare encounters.
   regular-beds: true

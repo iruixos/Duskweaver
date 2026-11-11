@@ -1,69 +1,53 @@
-![Duskweaver Banner](assets/header2.png)
+![Duskweaver](assets/header2.png)
 
 # Duskweaver
 
-**Weave time to your will.** A configurable day/night, sleeping, and optional Nightmare encounter plugin for Minecraft Paper.
+**Weave time to your will.** A configurable day/night, multiplayer sleeping, weather, and optional Nightmare encounter plugin for Minecraft Paper.
 
-Duskweaver provides independent day and night durations, multiplayer sleep management, weather clearing after successful sleep skips, and a configurable three-stage encounter inspired by Minecraft's early unsafe-bed ambushes.
+Duskweaver is designed for hard-survival servers that want predictable day/night timing and useful sleep controls without changing the core survival experience.
 
 ## Features
 
-### Day, night, and sleeping
+### Day/night and sleep
+- Configure daytime and nighttime independently (defaults: **15 minutes day / 5 minutes night** at 20 TPS).
+- Select managed worlds.
+- Choose single-player sleep, majority voting, or vanilla quorum behaviour, with a configurable countdown.
+- Exclude spectators and optionally inactive players from sleep calculations.
+- Optionally clear stormy weather after a successful night skip.
+- Support sleeping through daytime thunderstorms without advancing the clock to morning.
 
-- Set independent real-world day and night durations (default: **15-minute day / 5-minute night**, assuming 20 TPS).
-- Restrict time management to selected worlds.
-- Choose one-player sleep, majority voting, or the original vanilla sleep threshold.
-- Configure a cancellable sleep countdown (default: **10 seconds**).
-- Exclude spectators and optionally inactive players from sleep quorum calculations.
-- Optionally clear rain, snow, or thunderstorms after a successful sleep skip and enforce a minimum clear-weather interval.
-- Allow daytime thunderstorm sleeping to clear weather without advancing the clock to morning.
-- Restore original daylight-cycle and sleeping-percentage gamerules on a clean shutdown.
+### Nightmares
+Optional, Beta-inspired unsafe-bed encounters:
+- Detect dark, spawnable locations connected to a bed by **bounded ground-level pathfinding**. Open doors and indirect routes may make a bed unsafe; blocked approaches should not.
+- Apply a configurable chance **only after** finding a qualifying unsafe approach (default: **5%**).
+- Run a **three-tier encounter** with configurable monster pools, equipment, health, rewards, and Tier 3 names/titles.
+- Prioritize collision-free monster positions near the player, including illuminated interiors when there is sufficient room.
+- Display a configurable **Gold / Light Purple** countdown title with a native **PINK** progress BossBar across all three tiers, alongside the Tier 3 health BossBar.
+- Award tier-specific weighted rewards directly to inventory, dropping only overflow near the player.
+- Support configurable reward multipliers for Normal and Hard difficulty; Nightmares are disabled on Easy and Peaceful.
+- Hold the night before dawn while a Nightmare is pending or active; clean up interrupted encounters and tagged entities.
+- Start and persist a per-player cooldown when the first Nightmare monster spawns, including after disconnects, deaths, timeouts, cancellations, and server restarts.
 
-### Nightmares (optional)
-
-Sleeping in an unsafe bed can trigger a Nightmare. The plugin checks for a suitable hostile spawn location and then rolls the configured encounter chance (**5% by default**). Safe beds do not intentionally trigger encounters.
-
-- Fight **three consecutive enemy tiers** in one encounter.
-- Configure the hostile mob pool, health, and equipment for each tier.
-- Tier 1 and Tier 2 default to the name **Nightmare Shadow**; Tier 3 combines configurable names and titles (10 of each by default, for 100 possible combinations).
-- Configure the introductory delay, announcements, cosmetic spawn explosions, and beacon-like visual beam.
-- Display a boss bar for the final tier.
-- Earn weighted rewards after defeating each tier: **one distinct reward in Tier 1, two in Tier 2, and three in Tier 3** by default.
-- Deliver rewards **directly to the player's inventory**; only items that do not fit are dropped nearby.
-- Apply configurable reward-quantity multipliers for Normal and Hard difficulty. Nightmares are disabled on Easy and Peaceful.
-- Prevent dawn while an encounter is pending or active; the affected world's clock resumes afterward.
-- Clean up interrupted encounters and tagged orphan entities following restarts or crashes. Interrupted encounters are not treated as player defeats.
-- Store Nightmare cooldown/progress information in `plugins/Duskweaver/nightmare-progress.yml`.
-
-Nightmares have a configurable timeout and per-player cooldown. The supplied default configuration uses a **300-second encounter timeout** and **240-minute cooldown**.
+The default encounter timeout is **300 seconds**, and the default cooldown is **240 minutes**. A cancelled encounter does not award unfinished tier rewards.
 
 ## Requirements
 
-- **Server:** Paper 26.3 (target API: `26.3.build.244-stable`)
+- **Server:** Paper 26.3 (API `26.3.build.244-stable`)
 - **Java:** 25
-- **Build system:** Maven
+- **Build:** Maven
 - **Folia:** Not supported
 
 ## Installation
 
-1. Build the project or obtain the compiled plugin JAR.
-2. Place **one** Duskweaver JAR in the server's `plugins/` directory, removing older versions of the same plugin.
-3. Start the server to generate `plugins/Duskweaver/config.yml`.
-4. Edit the configuration and run `/duskweaver reload` (or `/dw reload`) to apply supported changes.
-
-### Build from source
-
-```bash
-mvn clean package
-```
-
-The resulting JAR is written to the Maven `target/` directory.
+1. Build with `mvn clean package`, or obtain the compatible JAR.
+2. Stop the server and place **one** Duskweaver JAR in `plugins/`.
+3. Start the server and review `plugins/Duskweaver/config.yml`.
+4. Merge new settings into an existing configuration manually; plugin upgrades do not automatically replace it.
+5. Use `/duskweaver reload` or `/dw reload` for supported configuration changes.
 
 ## Configuration
 
-All settings and comments are in [`src/main/resources/config.yml`](src/main/resources/config.yml). The repository's default configuration includes the project's customized Nightmare monster pools, rewards, and names. Existing installations keep their own generated configuration; new defaults are **not automatically merged** into an existing `plugins/Duskweaver/config.yml`.
-
-Common settings:
+The complete, commented configuration is in [`src/main/resources/config.yml`](src/main/resources/config.yml).
 
 ```yaml
 day-length-minutes: 15.0
@@ -72,54 +56,50 @@ night-length-minutes: 5.0
 worlds:
   - world
 
-sleep:
-  enabled: true
-  one-player-sleep: true
-  majority-vote: false
-  countdown-seconds: 10
-  clear-weather-on-skip: true
-  clear-weather-duration-minutes: 10
-
 nightmares:
   enabled: true
   spawn-chance-percent: 5.0
   cooldown-minutes: 240
   encounter-timeout-seconds: 300
+  debug: false
+  countdown-bossbar:
+    enabled: true
+  search-radius: 24
+  vertical-search-range: 16
+  pathfinding:
+    random-attempts: 20
+    max-visited-nodes: 3000
 ```
 
-The example above is abbreviated; consult the full configuration for monster pools, equipment, naming, loot tables, visual effects, and broadcast controls.
+This is an abbreviated example, not a replacement for the full generated YAML. The actual config also contains sleep controls, tier settings, names, rewards, and visual effects. Set `nightmares.debug: true` temporarily when testing unsafe-bed detection.
 
-### Tier 3 names
+### Nightmare timing and cooldown
 
-Under `nightmares.tiers.3`, customize the `names` and `titles` lists. One entry from each list is selected to create the final monster's display name. Tier 1 and Tier 2 use their own `display-name` settings. The full defaults are documented in `config.yml`.
+The countdown BossBar displays remaining time from the **encounter start**, using `nightmares.encounter-timeout-seconds`. It does not reset between tiers. Its title uses Minecraft Gold (`§6`) and Light Purple (`§d`) formatting, and the bar uses Minecraft's native `PINK` BossBar colour. Tier 3 retains its separate Dark Purple presentation.
 
-### Sleep modes
+Cooldown is associated with the player's UUID and recorded in `plugins/Duskweaver/nightmare-progress.yml` once Tier 1 spawns. Disconnecting or interrupting the fight does not make another Nightmare immediately available. A failed eligibility check or probability roll does not consume the cooldown.
 
-- `one-player-sleep: true`, `majority-vote: false`: one player can initiate a skip.
-- `one-player-sleep: false`, `majority-vote: true`: a strict majority of eligible players is required, with the two-player exception.
-- Both false: use the world's original vanilla sleeping threshold, while retaining Duskweaver's countdown.
-- Both true: invalid configuration.
+### Pathfinding and spawning
 
-Sleeping players always count as active; spectators are excluded. Inactivity detection is approximate and does not integrate with third-party AFK plugins.
+The unsafe-bed check uses a bounded Paper-API traversal, **not** Minecraft's native AI pathfinding. Darkness is checked for eligibility; once the event starts, monsters can spawn in sufficiently clear, illuminated locations near the player. The detector and encounter placement are separate systems.
 
 ## Commands and permissions
 
-| Command | Description | Permission |
+| Command | Permission | Purpose |
 | --- | --- | --- |
-| `/duskweaver reload` | Reload plugin configuration | `duskweaver.reload` |
-| `/dw reload` | Short alias for reload | `duskweaver.reload` |
+| `/duskweaver reload` | `duskweaver.reload` | Reload supported configuration |
+| `/dw reload` | `duskweaver.reload` | Alias |
 
-The reload permission defaults to server operators.
+The reload permission defaults to operators.
 
 ## Operational notes
 
-- Time durations depend on server tick rate; sustained lag affects real-world timing.
-- Duskweaver is not intended to run alongside another plugin that independently controls the same world's time or sleeping gamerules.
-- Nightmares use an approximation of unsafe-bed accessibility, not Minecraft's full mob pathfinding.
-- Encounter recovery **cleans up** interrupted fights; it does not resume them after a restart.
-- On an unexpected shutdown, cleanup callbacks cannot run; orphaned tagged entities are removed when their chunks load after restart.
-- Rewards follow the administrator's configured quantities and weights. Large values are intentionally not capped by the plugin.
-- Back up the configuration and Nightmare progress file before major upgrades.
+- The configured durations assume 20 TPS; lag affects real-world timing.
+- Avoid other plugins simultaneously controlling the same world's clock or sleep gamerules.
+- Encounter interruption cleans up mobs and UI rather than resuming an unfinished fight on reconnection.
+- On unexpected shutdown, tagged orphan entities are cleaned when relevant chunks load.
+- Keep backups of `config.yml` and `nightmare-progress.yml` when upgrading.
+- Test configuration changes on a staging server before deployment.
 
 ## Project information
 

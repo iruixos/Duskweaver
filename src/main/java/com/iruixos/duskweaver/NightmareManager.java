@@ -8,6 +8,7 @@ import org.joml.Vector3f;
 import org.joml.Quaternionf;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Block;
+import org.bukkit.block.data.Openable;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
@@ -65,7 +66,9 @@ final class NightmareManager implements Listener {
     private double chance;
     private long cooldownMillis;
     private int timeoutSeconds;
+    private boolean countdownBossbarEnabled;
     private int radius, vertical;
+    private int pathAttempts, pathNodeBudget;
     private BukkitTask beamTask;
     private boolean beamEnabled;
     private boolean spawnExplosionEnabled;
@@ -79,6 +82,7 @@ final class NightmareManager implements Listener {
     private static final class Encounter {
         UUID mob;
         BossBar bar;
+        BossBar countdownBar;
         long started;
         int tier;
         World world;
@@ -188,9 +192,22 @@ final class NightmareManager implements Listener {
         chance = Math.max(0, Math.min(100, cfg.getDouble("nightmares.spawn-chance-percent", 5)));
         cooldownMillis = Math.max(0L, cfg.getLong("nightmares.cooldown-minutes", 120)) * 60000L;
         timeoutSeconds = Math.max(10, cfg.getInt("nightmares.encounter-timeout-seconds", 300));
+        countdownBossbarEnabled = cfg.getBoolean("nightmares.countdown-bossbar.enabled", true);
+        for (var entry : encounters.entrySet()) {
+            Encounter active = entry.getValue();
+            if (!countdownBossbarEnabled && active.countdownBar != null) {
+                active.countdownBar.removeAll();
+                active.countdownBar = null;
+            } else if (countdownBossbarEnabled && active.countdownBar == null) {
+                Player viewer = Bukkit.getPlayer(entry.getKey());
+                if (viewer != null) active.countdownBar = createCountdownBar(viewer);
+            }
+        }
         startDelaySeconds = Math.max(0, Math.min(30, cfg.getInt("nightmares.start-delay-seconds", 5)));
         radius = Math.max(2, Math.min(24, cfg.getInt("nightmares.search-radius", 12)));
-        vertical = Math.max(1, Math.min(8, cfg.getInt("nightmares.vertical-search-range", 4)));
+        vertical = Math.max(1, Math.min(16, cfg.getInt("nightmares.vertical-search-range", 16)));
+        pathAttempts = Math.max(1, Math.min(100, cfg.getInt("nightmares.pathfinding.random-attempts", 20)));
+        pathNodeBudget = Math.max(128, Math.min(12000, cfg.getInt("nightmares.pathfinding.max-visited-nodes", 3000)));
         normalBeds = cfg.getBoolean("nightmares.regular-beds", true);
         strawBeds = cfg.getBoolean("nightmares.straw-beds", true);
         beamEnabled = cfg.getBoolean("nightmares.visuals.beam.enabled", true);
@@ -251,10 +268,22 @@ final class NightmareManager implements Listener {
         if (event.getBedEnterResult() != PlayerBedEnterEvent.BedEnterResult.OK) return;
         Player player = event.getPlayer();
         UUID id = player.getUniqueId();
-        if (hasActiveNightmare(player.getWorld()) || encounters.containsKey(id) || System.currentTimeMillis() < cooldowns.getOrDefault(id, 0L)) return;
+        if (hasActiveNightmare(player.getWorld()) || encounters.containsKey(id)) return;
+        if (System.currentTimeMillis() < cooldowns.getOrDefault(id, 0L)) {
+            trace("Sleep ignored: cooldown active for " + player.getName());
+            return;
+        }
         Block bed = event.getBed();
         Location spawn = findUnsafeSpawn(bed);
-        if (spawn == null || random.nextDouble() * 100 >= chance || pending.containsKey(id)) return;
+        if (spawn == null) {
+            trace("Sleep safe: no reachable dark spawn for " + player.getName());
+            return;
+        }
+        if (random.nextDouble() * 100 >= chance) {
+            trace("Sleep unsafe, but Nightmare probability roll failed for " + player.getName());
+            return;
+        }
+        if (pending.containsKey(id)) return;
         pendingWorlds.put(id, player.getWorld());
         trace("Pending Nightmare for " + player.getName() + " at " + bed.getLocation());
         Bukkit.broadcast(prefix().append(Component.text(
@@ -282,45 +311,97 @@ final class NightmareManager implements Listener {
         pending.put(id, task);
     }
 
-    /** Conservative security approximation: only dark, spawnable locations with a direct unobstructed walk to bed qualify. */
+    /** Beta-inspired reachability: bounded flood fill from the bedside, then sample
+     * dark, spawnable cells reachable through corridors and OPEN doors. No NMS,
+     * chunk loading, entity spawning, or pathfinding tasks are performed here.
+     */
     private Location findUnsafeSpawn(Block bed) {
         World world = bed.getWorld();
-        Location base = bed.getLocation();
         if (!nightmaresAllowed(world)) return null;
-        List<Location> options = new ArrayList<>();
-        // Limit sampling to loaded chunks, and require a clear, ground-level approach to the bed.
-        for (int dx = -radius; dx <= radius; dx++) for (int dz = -radius; dz <= radius; dz++) {
-            if (dx * dx + dz * dz > radius * radius || dx * dx + dz * dz < 9) continue;
-            int x = bed.getX() + dx, z = bed.getZ() + dz;
-            if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
-            for (int dy = -vertical; dy <= vertical; dy++) {
-                int y = bed.getY() + dy;
-                if (y <= world.getMinHeight() || y + 2 >= world.getMaxHeight()) continue;
-                Block feet = world.getBlockAt(x, y, z);
-                if (!feet.isPassable() || !feet.getRelative(0, 1, 0).isPassable()
-                        || !feet.getRelative(0, -1, 0).getType().isSolid()) continue;
-                if (feet.getLightFromBlocks() > 0) continue;
-                if (!clearApproach(feet, bed)) continue;
-                options.add(feet.getLocation().add(0.5, 0, 0.5));
+        final int bx = bed.getX(), by = bed.getY(), bz = bed.getZ();
+        final int[][] directions = {{1,0},{-1,0},{0,1},{0,-1}};
+        ArrayDeque<Block> queue = new ArrayDeque<>();
+        Set<Long> visited = new HashSet<>();
+        // The bed occupies the target space; a monster needs to reach an adjacent tile.
+        for (int[] dir : directions) {
+            Block neighbor = loadedBlock(world, bx + dir[0], by, bz + dir[1]);
+            if (walkable(neighbor) && visited.add(positionKey(neighbor))) queue.add(neighbor);
+        }
+        if (queue.isEmpty()) {
+            trace("Bed has no accessible adjacent standing position");
+            return null;
+        }
+        List<Location> candidates = new ArrayList<>();
+        int examined = 0;
+        while (!queue.isEmpty() && examined < pathNodeBudget) {
+            Block current = queue.removeFirst();
+            examined++;
+            int dx = current.getX() - bx, dz = current.getZ() - bz;
+            if (dx * dx + dz * dz >= 9 && spawnableDark(current))
+                candidates.add(current.getLocation().add(0.5, 0, 0.5));
+            for (int[] dir : directions) {
+                int nx = current.getX() + dir[0], nz = current.getZ() + dir[1];
+                int rx = nx - bx, rz = nz - bz;
+                if (rx * rx + rz * rz > radius * radius) continue;
+                // A one-block rise or drop is traversable; larger jumps are not.
+                for (int dy : new int[]{0, 1, -1}) {
+                    int ny = current.getY() + dy;
+                    if (Math.abs(ny - by) > vertical) continue;
+                    Block next = loadedBlock(world, nx, ny, nz);
+                    if (!walkable(next)) continue;
+                    if (dy > 0 && !headClear(current.getRelative(0, 2, 0))) continue;
+                    if (dy < 0 && !headClear(next.getRelative(0, 2, 0))) continue;
+                    if (visited.add(positionKey(next))) queue.addLast(next);
+                    break;
+                }
             }
         }
-        return options.isEmpty() ? null : options.get(random.nextInt(options.size()));
+        if (candidates.isEmpty()) {
+            trace("No dark spawn reachable from bed; visited " + examined + " path nodes");
+            return null;
+        }
+        // Beta-like random selection, with a bounded fallback so a valid doorway
+        // isn't missed solely because twenty random samples chose other locations.
+        for (int attempt = 0; attempt < pathAttempts; attempt++) {
+            Location choice = candidates.get(random.nextInt(candidates.size()));
+            if (validateSpawn(choice)) {
+                trace("Unsafe bed: reachable dark spawn found; visited " + examined + " nodes");
+                return choice;
+            }
+        }
+        for (Location choice : candidates) if (validateSpawn(choice)) return choice;
+        trace("Reachable positions found but no valid Nightmare spawn");
+        return null;
     }
 
-    private boolean clearApproach(Block from, Block bed) {
-        // Straight-line walkability is deliberately stricter than Minecraft pathfinding:
-        // a solid wall, closed door, or a height discontinuity prevents an encounter.
-        int steps = Math.max(Math.abs(from.getX() - bed.getX()), Math.abs(from.getZ() - bed.getZ()));
-        if (steps < 1 || Math.abs(from.getY() - bed.getY()) > 1) return false;
-        World w = from.getWorld();
-        for (int i = 1; i < steps; i++) {
-            int x = (int) Math.round(from.getX() + (bed.getX() - from.getX()) * (i / (double) steps));
-            int z = (int) Math.round(from.getZ() + (bed.getZ() - from.getZ()) * (i / (double) steps));
-            Block feet = w.getBlockAt(x, from.getY(), z);
-            if (!feet.isPassable() || !feet.getRelative(0, 1, 0).isPassable()
-                    || !feet.getRelative(0, -1, 0).getType().isSolid()) return false;
-        }
-        return true;
+    private Block loadedBlock(World world, int x, int y, int z) {
+        if (y <= world.getMinHeight() || y + 2 >= world.getMaxHeight()
+                || !world.isChunkLoaded(x >> 4, z >> 4)) return null;
+        return world.getBlockAt(x, y, z);
+    }
+
+    private long positionKey(Block block) {
+        return ((long) (block.getX() & 0x3ffffff) << 38)
+                | ((long) (block.getZ() & 0x3ffffff) << 12)
+                | (block.getY() & 0xfff);
+    }
+
+    private boolean headClear(Block block) {
+        if (block == null || block.isLiquid()) return false;
+        if (block.getBlockData() instanceof Openable openable) return openable.isOpen();
+        return block.isPassable();
+    }
+
+    private boolean walkable(Block feet) {
+        if (feet == null || !headClear(feet) || !headClear(feet.getRelative(0, 1, 0))) return false;
+        Block ground = feet.getRelative(0, -1, 0);
+        return ground.getType().isSolid() && !ground.isPassable();
+    }
+
+    private boolean spawnableDark(Block feet) {
+        // Block light zero matches the most conservative modern hostile spawning
+        // condition; skylight is deliberately not used as a proxy for block light.
+        return walkable(feet) && feet.getLightFromBlocks() == 0;
     }
 
     private boolean validateSpawn(Location loc) {
@@ -332,6 +413,72 @@ final class NightmareManager implements Listener {
                 && feet.getType() != Material.LAVA && feet.getType() != Material.WATER;
     }
 
+    /** Encounter placement is independent of the dark, naturally spawnable eligibility cell.
+     * Prioritize close, collision-free locations even in illuminated rooms. Search only
+     * loaded chunks; never generate terrain. Two blocks of headroom suffice for zombies.
+     */
+    private Location findEncounterSpawn(Player player, EntityType type) {
+        Location anchor = player.getLocation();
+        World world = anchor.getWorld();
+        if (world == null) return null;
+        Block base = anchor.getBlock();
+        // Keep monsters out of the player's own block; favor a nearby standing tile.
+        // Larger monsters (spiders, ravagers, etc.) require a wider footprint.
+        double width = switch (type) {
+            case SPIDER, CAVE_SPIDER -> type == EntityType.SPIDER ? 1.4 : 0.7;
+            default -> 0.65;
+        };
+        double height = switch (type) {
+            case ENDERMAN -> 2.9;
+            case WITHER_SKELETON -> 2.4;
+            default -> 1.95;
+        };
+        for (int distance = 2; distance <= 6; distance++) {
+            List<int[]> offsets = new ArrayList<>();
+            for (int dx = -distance; dx <= distance; dx++) {
+                for (int dz = -distance; dz <= distance; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) == distance)
+                        offsets.add(new int[]{dx, dz});
+                }
+            }
+            Collections.shuffle(offsets, random);
+            for (int[] offset : offsets) {
+                for (int dy : new int[]{0, -1, 1}) {
+                    Block feet = loadedBlock(world, base.getX() + offset[0], base.getY() + dy, base.getZ() + offset[1]);
+                    if (!canPlaceEncounterMob(feet, width, height)) continue;
+                    Location result = feet.getLocation().add(0.5, 0, 0.5);
+                    // Do not spawn on top of a roof: prefer the player's floor level.
+                    if (Math.abs(result.getY() - anchor.getY()) > 1.5) continue;
+                    return result;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean canPlaceEncounterMob(Block feet, double width, double height) {
+        if (feet == null) return false;
+        World world = feet.getWorld();
+        double half = width / 2.0;
+        double cx = feet.getX() + 0.5, cz = feet.getZ() + 0.5;
+        int minX = (int) Math.floor(cx - half), maxX = (int) Math.floor(cx + half);
+        int minZ = (int) Math.floor(cz - half), maxZ = (int) Math.floor(cz + half);
+        int headBlocks = (int) Math.ceil(height);
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                Block column = loadedBlock(world, x, feet.getY(), z);
+                if (column == null) return false;
+                Block floor = column.getRelative(0, -1, 0);
+                if (!floor.getType().isSolid() || floor.isPassable()) return false;
+                for (int y = 0; y < headBlocks; y++) {
+                    Block space = loadedBlock(world, x, feet.getY() + y, z);
+                    if (space == null || !headClear(space)) return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private void begin(Player player, Location spawn) {
         UUID id = player.getUniqueId();
         int tier = 1;
@@ -341,6 +488,13 @@ final class NightmareManager implements Listener {
     private void spawnWave(Player player, Location spawn, int tier) {
         UUID id = player.getUniqueId();
         EntityType type = chooseMonster(tier);
+        Location preferred = findEncounterSpawn(player, type);
+        if (preferred != null) {
+            spawn = preferred;
+            trace("Tier " + tier + " placed near player at " + spawn.getBlockX() + "," + spawn.getBlockY() + "," + spawn.getBlockZ());
+        } else {
+            trace("Tier " + tier + " has no nearby valid placement; using prior accessible spawn");
+        }
         if (!validateSpawn(spawn)) {
             Encounter previous = encounters.get(id);
             if (previous != null && previous.origin != null) {
@@ -430,7 +584,15 @@ final class NightmareManager implements Listener {
         if (encounter == null) {
             Encounter created = new Encounter(mob.getUniqueId(), bar, System.currentTimeMillis(), tier, player.getWorld());
             created.origin = spawn.clone();
+            if (countdownBossbarEnabled) {
+                created.countdownBar = createCountdownBar(player);
+                updateCountdownBar(created, System.currentTimeMillis());
+            }
             encounters.put(id, created);
+            // Start the persistent cooldown only after the first monster has spawned.
+            // Disconnects, deaths, timeouts, errors and restarts cannot reset it.
+            cooldowns.put(id, created.started() + cooldownMillis);
+            save();
         } else {
             if (encounter.bar != null) encounter.bar.removeAll();
             encounter.mob = mob.getUniqueId();
@@ -754,6 +916,25 @@ final class NightmareManager implements Listener {
         if (!(event.getTarget() instanceof Player p) || !p.getUniqueId().toString().equals(owner)) event.setCancelled(true);
     }
 
+    /** Separate from the Tier 3 health bar; Minecraft boss bars have preset colours. */
+    private BossBar createCountdownBar(Player player) {
+        BossBar bar = Bukkit.createBossBar("", BarColor.PINK, BarStyle.SOLID);
+        bar.addPlayer(player);
+        return bar;
+    }
+
+    private void updateCountdownBar(Encounter encounter, long now) {
+        BossBar bar = encounter.countdownBar;
+        if (bar == null) return;
+        long durationMillis = timeoutSeconds * 1000L;
+        long remainingMillis = Math.max(0L, durationMillis - Math.max(0L, now - encounter.started()));
+        long remainingSeconds = (remainingMillis + 999L) / 1000L;
+        bar.setTitle(org.bukkit.ChatColor.GOLD + "Nightmare" + org.bukkit.ChatColor.LIGHT_PURPLE
+                + " — " + String.format(java.util.Locale.ROOT, "%02d:%02d", remainingSeconds / 60, remainingSeconds % 60)
+                + " Remaining");
+        bar.setProgress(Math.max(0.0, Math.min(1.0, (double) remainingMillis / durationMillis)));
+    }
+
     private void tick() {
         long now = System.currentTimeMillis();
         for (UUID id : new ArrayList<>(pending.keySet())) {
@@ -771,6 +952,7 @@ final class NightmareManager implements Listener {
             if (now - encounter.started() >= timeoutSeconds * 1000L) {
                 finish(id, true, Outcome.TIMEOUT); continue;
             }
+            updateCountdownBar(encounter, now);
             // The one-tick transition between stages must remain active and keep sleep locked.
             if (encounter.transitioning) continue;
             if (!(entity instanceof LivingEntity mob) || !mob.isValid() || mob.isDead()) {
@@ -805,14 +987,16 @@ final class NightmareManager implements Listener {
                     outcome == Outcome.VICTORY ? NamedTextColor.GREEN : NamedTextColor.RED)));
         }
         if (encounter.bar() != null) encounter.bar().removeAll();
+        if (encounter.countdownBar != null) encounter.countdownBar.removeAll();
         removeBeam(id);
         lastAttackers.remove(encounter.mob());
         if (removeMob) {
             Entity entity = Bukkit.getEntity(encounter.mob());
             if (entity != null) entity.remove();
         }
-        if (outcome == Outcome.VICTORY || outcome == Outcome.DEFEAT || outcome == Outcome.TIMEOUT)
-            cooldowns.put(id, System.currentTimeMillis() + cooldownMillis);
+        // The cooldown is anchored to encounter start, never to its outcome.
+        // Preserve existing timestamps for every exit path, including CANCELLED.
+        cooldowns.putIfAbsent(id, encounter.started() + cooldownMillis);
         stages.put(id, 1);
         save();
     }
