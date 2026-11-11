@@ -1,36 +1,254 @@
-# Day covers Minecraft clock 0-11999; night covers 12000-23999.
-# Durations assume a server running at 20 TPS.
+# =============================================================================
+# Duskweaver — Configuration
+# =============================================================================
+# Controls day/night duration, sleeping behaviour, weather after sleep skips,
+# and optional Beta-inspired Nightmare encounters in managed worlds.
+#
+# Changes can be applied with /duskweaver reload (alias: /dw reload).
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# DAY & NIGHT CYCLE
+# -----------------------------------------------------------------------------
+# Set the real-world duration of Minecraft's day and night, in minutes.
+# Day covers clock time 0–11999; night covers 12000–23999.
+# Durations assume the server maintains 20 TPS.
+# -----------------------------------------------------------------------------
+
 day-length-minutes: 15.0
 night-length-minutes: 5.0
 
-# Only listed worlds are controlled by Duskweaver.
+
+# -----------------------------------------------------------------------------
+# MANAGED WORLDS
+# -----------------------------------------------------------------------------
+# Duskweaver only controls worlds listed here.
+# Use each world's exact name as it appears on the server.
+# -----------------------------------------------------------------------------
+
 worlds:
   - world
 
+
+# -----------------------------------------------------------------------------
+# SLEEP MANAGEMENT
+# -----------------------------------------------------------------------------
+# Configure how sleeping players skip the night in managed worlds.
+# -----------------------------------------------------------------------------
+
 sleep:
-  # false: sleeping does not skip the night in managed worlds.
+  # Enable or disable Duskweaver's sleep-skipping management.
   enabled: true
 
-  # Exactly one of the following should be true when sleep is enabled.
-  # If both are false, vanilla sleeping thresholds are used (with a countdown).
-  one-player-sleep: false
-  majority-vote: true
+  # Choose one sleep voting mode:
+  #   one-player-sleep: true  / majority-vote: false = one sleeper required
+  #   one-player-sleep: false / majority-vote: true  = strict majority
+  #   both false = original vanilla sleep threshold, with countdown
+  # Do not enable both options at once.
+  one-player-sleep: true
+  majority-vote: false
 
-  # Seconds of continuous quorum before advancing to the next dawn.
+  # Seconds the required number of players must remain asleep.
   countdown-seconds: 10
 
-  # Players who have not moved, interacted, or chatted within this period
-  # do not count toward the majority. 0 disables inactivity filtering.
-  # Sleeping players always count as active. Spectators never count.
+  # Ignore inactive players when calculating the sleep majority.
+  # A player is considered inactive after this many minutes without
+  # movement, interaction, or chat. Set to 0 to disable this filter.
+  # Sleeping players always count; spectators never count.
   inactivity-timeout-minutes: 5
 
-  # Announce countdown start, cancellation and completion to the world.
+  # Announce countdown starts, cancellations, and completion to the world.
   broadcast-messages: true
 
-  # Clear rain, snow and thunderstorms after a successful Duskweaver night skip.
-  # Does not clear weather when entering a bed or when the countdown is cancelled.
+  # Clear rain, snow, and thunderstorms after a successful night skip.
+  # Weather is not cleared simply by entering a bed or cancelling a skip.
   clear-weather-on-skip: true
 
-  # Minimum period of clear weather following a successful weather-clearing skip,
-  # in real-time minutes at 20 TPS. 0 resumes normal weather scheduling.
+  # Minimum clear-weather duration after a weather-clearing skip.
+  # Measured in real-time minutes at 20 TPS.
+  # Set to 0 to resume normal weather scheduling.
   clear-weather-duration-minutes: 10
+
+
+# -----------------------------------------------------------------------------
+# NIGHTMARES — ENCOUNTER SETTINGS
+# -----------------------------------------------------------------------------
+# Optional Minecraft Beta-inspired encounters when sleeping in unsafe beds.
+# Only beds in managed worlds qualify. A failed spawn roll does not trigger
+# an encounter. Cooldowns are tracked separately for each player.
+# -----------------------------------------------------------------------------
+
+nightmares:
+  # Master switch for Nightmare encounters.
+  enabled: true
+  start-delay-seconds: 5
+  debug: false
+
+  # Percentage chance of an encounter after an unsafe sleep attempt.
+  spawn-chance-percent: 5.0
+
+  # Real-world minutes before the player can encounter another Nightmare
+  # after an encounter ends, whether they win, lose, or escape.
+  cooldown-minutes: 240
+
+  # Maximum duration of an active encounter, in seconds.
+  encounter-timeout-seconds: 300
+
+  # Area examined around the bed for unsafe conditions and spawn locations.
+  search-radius: 12
+  vertical-search-range: 4
+
+  # Bed types eligible for Nightmare encounters.
+  regular-beds: true
+  straw-beds: true
+
+  # Continuous, beacon-like light column follows each Nightmare mob.
+  # Uses a glowing display entity, not real beacon blocks or particles.
+  # Server-wide announcements after an encounter ends.
+  broadcasts:
+    outcomes:
+      enabled: true
+
+  visuals:
+    # Cosmetic explosion when each wave's monster appears; never damages blocks or entities.
+    spawn-explosion:
+      enabled: true
+    beam:
+      enabled: true
+      height-blocks: 12
+      interval-ticks: 2
+
+  # ---------------------------------------------------------------------------
+  # NIGHTMARES — ENEMY TIERS
+  # ---------------------------------------------------------------------------
+  # Each encounter progresses through all three tiers in sequence.
+  # Defeat a wave to summon the next one; defeat Tier 3 to finish.
+  # Losing or escaping ends the encounter and starts the cooldown.
+  # Health is measured in HP (2 HP = 1 heart).
+  # Armour enchantments apply to each equipped armour piece.
+  # ---------------------------------------------------------------------------
+
+  # Monster lists accept hostile Minecraft entity IDs (e.g. HUSK, STRAY).
+  # Armour is only equipped when the selected mob supports equipment slots.
+  # Bosses and non-hostile entities are rejected; invalid entries log warnings.
+  tiers:
+    # Tier 1: 30 HP / 15 hearts; no configured armour.
+    # A random monster is selected from this list for each encounter.
+    1:
+      health: 30.0
+      display-name: "Nightmare Shadow"
+      monsters:
+        - ZOMBIE
+        - SKELETON
+        - SPIDER
+
+    # Tier 2: 50 HP / 25 hearts; full Protection I iron armour.
+    2:
+      health: 45.0
+      display-name: "Nightmare Shadow"
+      monsters:
+        - ZOMBIE
+        - SKELETON
+        - BOGGED
+      armor: IRON
+      protection-level: 1
+
+    # Tier 3: 60 HP / 30 hearts; Wither Skeleton or Husk,
+    # full Protection II diamond armour with Thorns I and boss bar.
+    3:
+      health: 60.0
+      monsters:
+        - WITHER_SKELETON
+        - HUSK
+      armor: DIAMOND
+      protection-level: 2
+      thorns-level: 1
+      # Randomly combine one name and one title for the Tier 3 boss.
+      # Add, remove, or replace entries to customize the naming pool.
+      names:
+        - "Malachar"
+        - "Veydris"
+        - "Morvane"
+        - "Nocthar"
+        - "Velkris"
+        - "Draeven"
+        - "Nyxaris"
+        - "Thalvorn"
+        - "Zerathis"
+        - "Kaelgrim"
+      titles:
+        - "the Hollowed"
+        - "the Forsaken"
+        - "the Sleepless"
+        - "the Dream-Eater"
+        - "the Restless"
+        - "the Veilbound"
+        - "the Nightbringer"
+        - "the Unforgotten"
+        - "the Dreadbound"
+        - "the Shadowborn"
+      boss-bar:
+        enabled: true
+
+  # ---------------------------------------------------------------------------
+  # NIGHTMARES — REWARDS
+  # ---------------------------------------------------------------------------
+  # Tier 1 gives one reward, Tier 2 gives two distinct rewards,
+  # and Tier 3 gives three distinct rewards.
+  # Each tier has a separate reward pool; the same material cannot
+  # be selected twice within a single tier's reward rolls.
+  #
+  # weight: relative selection likelihood within that tier.
+  # min/max: inclusive item quantity range for the selected reward.
+  # ---------------------------------------------------------------------------
+
+  rewards:
+    enabled: true
+
+    # Scale the QUANTITY of each selected reward by world difficulty.
+    # The number of distinct reward rolls (1 / 2 / 3) is unchanged.
+    # Setting enabled to false for a difficulty uses 1x instead.
+    # Easy and Peaceful always disable the entire Nightmare module.
+    difficulty-multipliers:
+      normal:
+        enabled: true
+        multiplier: 1
+      hard:
+        enabled: true
+        multiplier: 2
+
+    rolls-per-tier:
+      1: 1
+      2: 2
+      3: 3
+    tiers:
+      # Tier 1: modest survival rewards.
+      1:
+        IRON_INGOT: {weight: 30, min: 6, max: 12}
+        GOLD_INGOT: {weight: 20, min: 3, max: 9}
+        EMERALD: {weight: 15, min: 1, max: 20}
+        EXPERIENCE_BOTTLE: {weight: 15, min: 2, max: 8}
+        GOLDEN_CARROT: {weight: 10, min: 2, max: 4}
+        ENDER_PEARL: {weight: 10, min: 1, max: 1}
+
+      # Tier 2: stronger rewards for an armoured opponent.
+      2:
+        EMERALD: {weight: 25, min: 2, max: 40}
+        GOLD_INGOT: {weight: 20, min: 4, max: 12}
+        DIAMOND: {weight: 15, min: 1, max: 5}
+        EXPERIENCE_BOTTLE: {weight: 15, min: 5, max: 15}
+        GOLDEN_APPLE: {weight: 15, min: 1, max: 2}
+        ENDER_PEARL: {weight: 10, min: 2, max: 3}
+
+      # Tier 3: premium rewards.
+      3:
+        EMERALD: {weight: 25, min: 15, max: 100}
+        DIAMOND: {weight: 25, min: 5, max: 10}
+        DIAMOND_BLOCK: {weight: 5, min: 1, max: 3}
+        ENCHANTED_GOLDEN_APPLE: {weight: 15, min: 1, max: 2}
+        GOLD_BLOCK: {weight: 10, min: 2, max: 3}
+        EXPERIENCE_BOTTLE: {weight: 10, min: 10, max: 30}
+        NETHERITE_SCRAP: {weight: 5, min: 1, max: 5}
+        ANCIENT_DEBRIS: {weight: 5, min: 1, max: 5}
+        NETHERITE_BLOCK: {weight: 1, min: 1, max: 1}

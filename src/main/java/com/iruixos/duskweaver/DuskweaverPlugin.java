@@ -3,6 +3,9 @@ package com.iruixos.duskweaver;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.configuration.InvalidConfigurationException;
+import java.io.IOException;
 import org.bukkit.GameMode;
 import org.bukkit.GameRules;
 import org.bukkit.World;
@@ -27,6 +30,7 @@ import java.util.UUID;
 public final class DuskweaverPlugin extends JavaPlugin implements Listener {
     private final Map<String, WorldClock> clocks = new HashMap<>();
     private final Map<UUID, Long> lastActivity = new HashMap<>();
+    private NightmareManager nightmares;
     private BukkitTask clockTask;
     private BukkitTask sleepTask;
     private double dayStep;
@@ -53,6 +57,7 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
         Bukkit.getPluginManager().registerEvents(this, this);
         clockTask = Bukkit.getScheduler().runTaskTimer(this, this::tickClocks, 1L, 1L);
         sleepTask = Bukkit.getScheduler().runTaskTimer(this, this::tickSleep, 20L, 20L);
+        nightmares = new NightmareManager(this);
         printStartupBanner();
     }
 
@@ -76,11 +81,21 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
     public void onDisable() {
         if (clockTask != null) clockTask.cancel();
         if (sleepTask != null) sleepTask.cancel();
+        if (nightmares != null) nightmares.shutdown();
         releaseAll();
         lastActivity.clear();
     }
 
     private boolean configure() {
+        // Reject malformed YAML before replacing the active configuration.
+        if (getDataFolder().toPath().resolve("config.yml").toFile().isFile()) {
+            try {
+                new YamlConfiguration().load(getDataFolder().toPath().resolve("config.yml").toFile());
+            } catch (IOException | InvalidConfigurationException ex) {
+                getLogger().severe("Invalid config.yml; previous runtime settings retained: " + ex.getMessage());
+                return false;
+            }
+        }
         reloadConfig();
         double day = getConfig().getDouble("day-length-minutes", -1);
         double night = getConfig().getDouble("night-length-minutes", -1);
@@ -143,10 +158,13 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
             world.setGameRule(GameRules.PLAYERS_SLEEPING_PERCENTAGE, 101);
             clocks.put(name, clock);
         }
+        if (nightmares != null) nightmares.configure();
         getLogger().info("Managing " + clocks.size() + " worlds; day=" + day + "m, night=" + night
                 + "m, sleeping=" + (enabled ? (single ? "one-player" : majority ? "majority" : "vanilla threshold") : "disabled") + ".");
         return true;
     }
+
+    boolean isManagedWorld(World world) { return clocks.containsKey(world.getName()); }
 
     private void tickClocks() {
         for (var entry : clocks.entrySet()) {
@@ -159,9 +177,23 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
                 clock.lastFullTime = current;
             }
             long time = Math.floorMod(current, 24000L);
+            // An active or pending Nightmare may run past the normal night length.
+            // Freeze immediately before dawn; resume on the first tick after resolution.
+            if (nightmares != null && nightmares.hasActiveNightmare(world)
+                    && time >= 12000L && time >= 23999L) {
+                clock.fraction = 0;
+                continue;
+            }
             clock.fraction += time < 12000 ? dayStep : nightStep;
             long advance = (long) Math.floor(clock.fraction);
             if (advance > 0) {
+                if (nightmares != null && nightmares.hasActiveNightmare(world)
+                        && time >= 12000L)
+                    advance = Math.min(advance, 23999L - time);
+                if (advance == 0) {
+                    clock.fraction = 0;
+                    continue;
+                }
                 clock.fraction -= advance;
                 world.setFullTime(current + advance);
                 clock.lastFullTime = current + advance;
@@ -175,6 +207,20 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
             World world = Bukkit.getWorld(entry.getKey());
             if (world == null) continue;
             WorldClock clock = entry.getValue();
+            if (nightmares != null && nightmares.hasActiveNightmare(world)) {
+                cancelCountdown(world, clock);
+                long nowMessage = System.currentTimeMillis();
+                if (nightmares.hasStartedNightmare(world)
+                        && world.getPlayers().stream().anyMatch(Player::isSleeping)
+                        && nowMessage - clock.lastNightmareWarning >= 10000L) {
+                    clock.lastNightmareWarning = nowMessage;
+                    Component warning = prefix().append(Component.text(
+                            nightmares.affectedPlayer(world) + " has been swallowed by the Nightmare! " +
+                            "You must dispel the shadows tormenting them before the night can pass.", NamedTextColor.LIGHT_PURPLE));
+                    for (Player player : world.getPlayers()) if (player.isSleeping()) player.sendMessage(warning);
+                }
+                continue;
+            }
             long time = Math.floorMod(world.getFullTime(), 24000L);
             // During a daytime thunderstorm, vanilla allows players to sleep.
             // Treat this as a weather skip, not a night skip: preserve the clock.
@@ -215,6 +261,10 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
                 }
             }
             if (now - clock.countdownStart >= countdownSeconds * 1000L) {
+                if (nightmares != null && nightmares.hasActiveNightmare(world)) {
+                    cancelCountdown(world, clock);
+                    continue;
+                }
                 // Re-evaluate at completion: a storm can end during the countdown,
                 // or a world clock can cross from day into night.
                 long fullTime = world.getFullTime();
@@ -323,6 +373,7 @@ public final class DuskweaverPlugin extends JavaPlugin implements Listener {
         long lastFullTime;
         double fraction;
         long countdownStart = -1;
+        long lastNightmareWarning = 0L;
 
         WorldClock(boolean daylight, int sleepingPercentage, long fullTime) {
             originalDaylightCycle = daylight;
